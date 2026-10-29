@@ -16,6 +16,8 @@ Option Explicit
 '   Maestro       TU lista de codigos. Tu escribes A:D (codigo, nombre,
 '                 categoria, fuera/REF). El vector llena E:N.
 '   BD_Precios    un precio por codigo y dia. Crece sola, nunca se borra.
+'   Matriz        VISTA: codigos abajo, fechas arriba, precio limpio en cada
+'                 celda. Solo para mirar; el producto lee BD_Precios.
 '   Columnas_Vector  ayuda: que hay en cada columna del vector
 '   Panel         los botones
 '   Log           el ultimo error, completo
@@ -30,12 +32,13 @@ Option Explicit
 '   - Nada se corrige en silencio: lo raro cae en la columna Flag.
 '==============================================================================
 
-Private Const VER As String = "1.0"
+Private Const VER As String = "1.1"
 
 Private Const SH_CFG As String = "Config"
 Private Const SH_MAE As String = "Maestro"
 Private Const SH_PRE As String = "BD_Precios"
 Private Const SH_CVE As String = "Columnas_Vector"
+Private Const SH_MTZ As String = "Matriz"
 Private Const SH_LOG As String = "Log"
 Private Const SH_PAN As String = "Panel"
 
@@ -769,6 +772,137 @@ End Sub
 
 
 '==============================================================================
+'  MATRIZ: vista horizontal de BD_Precios
+'==============================================================================
+Public Sub VerMatriz()
+    ' Codigos abajo, fechas arriba, precio limpio en cada celda. Es una VISTA
+    ' que se rehace entera cada vez: BD_Precios sigue siendo la base.
+    Dim wsP As Worksheet, ws As Worksheet, v As Variant
+    Dim ult As Long, i As Long, nF As Long, nC As Long
+    Dim fechas As Object, codigos As Object, nombres As Object
+    Dim k As Variant, arrF() As Double, out() As Variant
+    Dim cod As String, maes As Object
+    Dim scrPrev As Boolean, calcPrev As XlCalculation
+
+    On Error GoTo Falla
+    If Not HojaExiste(SH_PRE) Then
+        MsgBox "No hay BD_Precios todavia. Corre Cargar vectores.", vbExclamation, "VerMatriz"
+        Exit Sub
+    End If
+    scrPrev = Application.ScreenUpdating
+    calcPrev = Application.Calculation
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Set wsP = ThisWorkbook.Worksheets(SH_PRE)
+    ult = wsP.Cells(wsP.Rows.Count, 1).End(xlUp).Row
+    If ult < 2 Then Err.Raise vbObjectError + 80, , "BD_Precios esta vacia."
+    v = wsP.Range(wsP.Cells(2, 1), wsP.Cells(ult, 5)).Value2
+
+    ' fechas distintas (columnas) y codigos distintos (filas), en el orden
+    ' del Maestro para que se lea igual que el cuadro
+    Set fechas = NuevoDic()
+    Set codigos = NuevoDic()
+    Set nombres = NuevoDic()
+    Set maes = CodigosMaestro()
+    If HojaExiste(SH_MAE) Then
+        Set ws = ThisWorkbook.Worksheets(SH_MAE)
+        For Each k In maes.Keys
+            nombres(CStr(k)) = Txt(ws.Cells(CLng(maes(k)), MA_NOM).Value)
+        Next k
+    End If
+    For Each k In maes.Keys
+        codigos.Add CStr(k), codigos.Count + 2
+    Next k
+    For i = 1 To UBound(v, 1)
+        If EsNumero(v(i, 1)) Then
+            If Not fechas.Exists(CLng(v(i, 1))) Then fechas(CLng(v(i, 1))) = 0
+            cod = SinGuiones(Txt(v(i, 2)))
+            If Len(cod) > 0 And Not codigos.Exists(cod) Then codigos.Add cod, codigos.Count + 2
+        End If
+    Next i
+
+    ' fechas ordenadas de la mas vieja (izquierda) a la mas nueva (derecha)
+    nC = fechas.Count
+    ReDim arrF(1 To nC)
+    i = 0
+    For Each k In fechas.Keys
+        i = i + 1
+        arrF(i) = CDbl(k)
+    Next k
+    OrdenarDoubles arrF
+    For i = 1 To nC
+        fechas(CLng(arrF(i))) = i + 2
+    Next i
+
+    nF = codigos.Count + 1
+    ReDim out(1 To nF, 1 To nC + 2)
+    out(1, 1) = "Codigo SBS"
+    out(1, 2) = "Nombre"
+    For i = 1 To nC
+        out(1, i + 2) = arrF(i)
+    Next i
+    For Each k In codigos.Keys
+        out(CLng(codigos(k)), 1) = "'" & CStr(k)
+        If nombres.Exists(CStr(k)) Then out(CLng(codigos(k)), 2) = nombres(CStr(k))
+    Next k
+    For i = 1 To UBound(v, 1)
+        If EsNumero(v(i, 1)) And EsNumero(v(i, 5)) Then
+            cod = SinGuiones(Txt(v(i, 2)))
+            If codigos.Exists(cod) Then
+                out(CLng(codigos(cod)), CLng(fechas(CLng(v(i, 1))))) = CDbl(v(i, 5))
+            End If
+        End If
+    Next i
+
+    Set ws = HojaOCrea(SH_MTZ)
+    ws.Cells.Clear
+    ws.Range(ws.Cells(1, 1), ws.Cells(nF, nC + 2)).Value = out
+    With ws.Range(ws.Cells(1, 1), ws.Cells(1, nC + 2))
+        .Font.Bold = True
+        .Font.Color = RGB(255, 255, 255)
+        .Interior.Color = RGB(64, 64, 64)
+        .NumberFormat = "dd/mm/yy"
+        .HorizontalAlignment = xlCenter
+    End With
+    ws.Range(ws.Cells(2, 3), ws.Cells(nF, nC + 2)).NumberFormat = "0.0000"
+    ws.Columns(1).ColumnWidth = 18
+    ws.Columns(2).ColumnWidth = 30
+    ws.Range(ws.Columns(3), ws.Columns(nC + 2)).ColumnWidth = 9
+    CongelarPaneles ws, 1, 2
+    ws.Activate
+    ' abrir mostrando las ultimas fechas, que son las que se miran
+    On Error Resume Next
+    ActiveWindow.ScrollColumn = IIf(nC > 12, nC - 10, 1)
+    On Error GoTo Falla
+    ws.Range("A1").Select
+
+    Application.Calculation = calcPrev
+    Application.ScreenUpdating = scrPrev
+    MsgBox "Matriz lista: " & (nF - 1) & " codigos x " & nC & " fechas (precio limpio)." & vbCrLf & vbCrLf & _
+           "Es solo una vista. Se rehace cada vez que aprietas el boton.", vbInformation, "VerMatriz"
+    Exit Sub
+
+Falla:
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "VerMatriz se detuvo." & vbCrLf & vbCrLf & Err.Description, vbCritical, "VerMatriz"
+End Sub
+
+
+Private Sub OrdenarDoubles(ByRef a() As Double)
+    Dim i As Long, j As Long, t As Double
+    For i = LBound(a) To UBound(a) - 1
+        For j = i + 1 To UBound(a)
+            If a(j) < a(i) Then
+                t = a(i): a(i) = a(j): a(j) = t
+            End If
+        Next j
+    Next i
+End Sub
+
+
+'==============================================================================
 '  VER COLUMNAS DEL VECTOR
 '==============================================================================
 Public Sub ColumnasVector()
@@ -984,7 +1118,8 @@ Public Sub CrearPanel()
 
     rutina = Array( _
         "CargarVectores", "1. Cargar vectores", _
-        "CargarDatosVector", "2. Datos del vector")
+        "CargarDatosVector", "2. Datos del vector", _
+        "VerMatriz", "Ver matriz de precios")
 
     extra = Array( _
         "NormalizarExcel", "ARREGLAR EXCEL", _
