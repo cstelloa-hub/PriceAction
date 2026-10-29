@@ -1777,7 +1777,9 @@ End Sub
 Private Function Letra(ByVal s As String, porDefecto As Long) As Long
     Dim i As Long, n As Long, ch As Long
     s = UCase$(Trim$(s))
-    If Len(s) = 0 Then
+    ' Una columna de Excel tiene 1 a 3 letras (hasta XFD). Mas que eso es una
+    ' palabra, no una columna: se devuelve el valor por defecto.
+    If Len(s) = 0 Or Len(s) > 3 Then
         Letra = porDefecto
         Exit Function
     End If
