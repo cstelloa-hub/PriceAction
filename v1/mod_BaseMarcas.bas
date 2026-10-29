@@ -30,7 +30,7 @@ Option Explicit
 '   - Nada se corrige en silencio: lo raro cae en la columna Flag.
 '==============================================================================
 
-Private Const VER As String = "1.0"
+Private Const VER As String = "1.1"
 
 Private Const SH_CFG As String = "Config"
 Private Const SH_MAE As String = "Maestro_Fondos"
@@ -388,7 +388,26 @@ Public Sub CargarMarcas()
         Err.Raise vbObjectError + 35, , msg
     End If
 
-    Paso "Filtrando las marcas de tus fondos"
+    ' Antes de tocar el array: que ninguna columna se salga de la hoja. Si una
+    ' letra de Config apunta mas alla de lo que tiene la hoja, aqui se dice
+    ' con todas sus letras en vez de reventar con "subindice fuera de rango".
+    If colDia > UBound(v, 2) Or colCod > UBound(v, 2) Or colVar > UBound(v, 2) Or colNom > UBound(v, 2) Then
+        Err.Raise vbObjectError + 37, , _
+            "Una columna apunta fuera de la hoja '" & hoja & "', que tiene " & UBound(v, 2) & _
+            " columnas (hasta la " & NumALetra(UBound(v, 2)) & ")." & vbCrLf & _
+            "Dia: " & LetraODash(colDia) & "   Codigo: " & LetraODash(colCod) & _
+            "   Var Adj: " & LetraODash(colVar) & "   Nombre: " & LetraODash(colNom) & vbCrLf & _
+            "Corrige Config C8:C11 o dejalas vacias para que las busque."
+    End If
+    If fil0 > UBound(v, 1) Then
+        Err.Raise vbObjectError + 38, , _
+            "La primera fila de datos (Config C5 = " & fil0 & ") esta mas abajo que la ultima fila " & _
+            "de la hoja (" & UBound(v, 1) & ")."
+    End If
+
+    Paso "Filtrando las marcas de tus fondos (" & (UBound(v, 1) - fil0 + 1) & " filas; Dia " & _
+         LetraODash(colDia) & ", Codigo " & LetraODash(colCod) & ", Var " & LetraODash(colVar) & _
+         ", Nombre " & LetraODash(colNom) & ")"
     ' Buffer (columna, fila): ReDim Preserve solo crece la ULTIMA dimension.
     ReDim det(1 To MD_COLS, 1 To 50000)
     nDet = 0
@@ -396,6 +415,7 @@ Public Sub CargarMarcas()
     Set ultMar = NuevoDic()
     nFilas = UBound(v, 1)
     For i = fil0 To nFilas
+        If (i Mod 250) = 0 Then mDetalle = "Filtrando, fila " & i & " de " & nFilas
         If EsNumero(v(i, colDia)) Then
             cod = SinGuiones(Txt(v(i, colCod)))
             If codigos.Exists(cod) Then
