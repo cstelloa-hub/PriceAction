@@ -30,7 +30,7 @@ Option Explicit
 '   - Nada se corrige en silencio: lo raro cae en la columna Flag.
 '==============================================================================
 
-Private Const VER As String = "1.1"
+Private Const VER As String = "1.3"
 
 Private Const SH_CFG As String = "Config"
 Private Const SH_MAE As String = "Maestro_Fondos"
@@ -89,12 +89,12 @@ Public Sub CrearConfig()
 
     Cfg ws, 2, "Libro de Marcas (ruta completa)", Rec(prev, "C2", ""), _
         "Con carpeta y extension. Se abre en solo lectura."
-    Cfg ws, 3, "Hoja de Marcas", Rec(prev, "C3", "Hoja 3"), "Nombre o numero de la hoja."
+    Cfg ws, 3, "Hoja de Marcas", Rec(prev, "C3", "3"), "El nombre de la pestana tal cual (en tu libro se llama 3)."
     Cfg ws, 4, "Fila de la cabecera", Rec(prev, "C4", 3), ""
     Cfg ws, 5, "Primera fila de datos", Rec(prev, "C5", 4), ""
     ws.Range("C2:C5").Interior.Color = RGB(255, 242, 204)
 
-    ws.Range("B7").Value = "COLUMNAS DE MARCAS  (letra; vacio = la busca por la cabecera)"
+    ws.Range("B7").Value = "COLUMNAS DE MARCAS  (letra como G, o un texto de la cabecera como FECHA; vacio = la busca sola)"
     ws.Range("B7").Font.Bold = True
     Map ws, 8, "Columna Dia", Txt(Rec(prev, "C8", ""))
     Map ws, 9, "Columna Codigo SBS", Txt(Rec(prev, "C9", "G"))
@@ -342,11 +342,12 @@ Public Sub CargarMarcas()
     Paso "Abriendo Marcas en solo lectura"
     yaAbierto = LibroYaAbierto(ruta)
     Set wb = Workbooks.Open(Filename:=ruta, ReadOnly:=True, UpdateLinks:=0, AddToMru:=False)
+    ' Primero por NOMBRE (la hoja de Marcas se llama "3", literalmente).
+    ' Solo si no hay ninguna con ese nombre y es un numero, por posicion.
     On Error Resume Next
-    If IsNumeric(hoja) Then
-        Set ws = wb.Worksheets(CLng(hoja))
-    Else
-        Set ws = wb.Worksheets(hoja)
+    Set ws = wb.Worksheets(hoja)
+    If ws Is Nothing Then
+        If IsNumeric(hoja) Then Set ws = wb.Worksheets(CLng(hoja))
     End If
     On Error GoTo Falla
     If ws Is Nothing Then
@@ -366,15 +367,13 @@ Public Sub CargarMarcas()
     If Not IsArray(v) Then Err.Raise vbObjectError + 34, , "La hoja de Marcas salio vacia."
 
     Paso "Ubicando las columnas"
-    colDia = Letra(Txt(wsCfg.Range("C8").Value), 0)
-    colCod = Letra(Txt(wsCfg.Range("C9").Value), 0)
-    colVar = Letra(Txt(wsCfg.Range("C10").Value), 0)
-    colNom = Letra(Txt(wsCfg.Range("C11").Value), 0)
+    ' Cada celda de Config puede traer: una LETRA (G), un TEXTO de cabecera
+    ' (FECHA) o nada (busca con los patrones de siempre).
     filaCab = cab
-    If colDia = 0 Then colDia = BuscaCol(v, cab, "DIA|FECHA", filaCab)
-    If colCod = 0 Then colCod = BuscaCol(v, cab, "CODIGO SBS|CODIGO", filaCab)
-    If colVar = 0 Then colVar = BuscaCol(v, cab, "VAR AJ|VARIACION AJ|VARAJ|AJUSTADA", filaCab)
-    If colNom = 0 Then colNom = BuscaCol(v, cab, "NOMBRE|FONDO", filaCab)
+    colDia = ColDesde(v, cab, Txt(wsCfg.Range("C8").Value), "DIA|FECHA", filaCab)
+    colCod = ColDesde(v, cab, Txt(wsCfg.Range("C9").Value), "CODIGO SBS|CODIGO", filaCab)
+    colVar = ColDesde(v, cab, Txt(wsCfg.Range("C10").Value), "VAR AJ|VARIACION AJ|VARAJ|AJUSTADA", filaCab)
+    colNom = ColDesde(v, cab, Txt(wsCfg.Range("C11").Value), "NOMBRE|FONDO", filaCab)
     If filaCab > cab Then
         cab = filaCab
         If fil0 <= cab Then fil0 = cab + 1
@@ -712,6 +711,28 @@ End Sub
 '==============================================================================
 '  LECTURA DE MARCAS
 '==============================================================================
+Private Function ColDesde(v As Variant, cab As Long, cfgTxt As String, patrones As String, _
+                          ByRef filaCab As Long) As Long
+    ' cfgTxt = "G"      -> columna G
+    ' cfgTxt = "FECHA"  -> la columna cuya cabecera contenga FECHA
+    ' cfgTxt = ""       -> la columna cuya cabecera contenga alguno de los patrones
+    Dim t As String, n As Long
+    t = Trim$(cfgTxt)
+    If Len(t) = 0 Then
+        ColDesde = BuscaCol(v, cab, patrones, filaCab)
+        Exit Function
+    End If
+    If Len(t) <= 3 Then
+        n = Letra(t, 0)
+        If n > 0 And n <= 16384 Then
+            ColDesde = n
+            Exit Function
+        End If
+    End If
+    ColDesde = BuscaCol(v, cab, NormTxt(t), filaCab)
+End Function
+
+
 Private Function BuscaCol(v As Variant, cab As Long, patrones As String, _
                           ByRef filaCab As Long) As Long
     ' Busca la columna cuya cabecera contenga alguno de los patrones. Empieza
@@ -932,7 +953,9 @@ End Sub
 Private Function Letra(ByVal s As String, porDefecto As Long) As Long
     Dim i As Long, n As Long, ch As Long
     s = UCase$(Trim$(s))
-    If Len(s) = 0 Then
+    ' Una columna de Excel tiene 1 a 3 letras (hasta XFD). Mas que eso es una
+    ' palabra, no una columna: se devuelve el valor por defecto.
+    If Len(s) = 0 Or Len(s) > 3 Then
         Letra = porDefecto
         Exit Function
     End If
