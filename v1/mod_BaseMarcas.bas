@@ -15,6 +15,9 @@ Option Explicit
 '   Datos_Fondos    HISTORICO que escribes tu: fecha, codigo, duracion,
 '                   spread, CY. Una fila por fondo y fecha. Nunca se borra.
 '   Marcas_Detalle  una marca por fondo y fecha, tal cual viene de Marcas
+'   Codigos_Marcas  TODOS los codigos que hay en Marcas, con nombre y conteo:
+'                 para copiar el codigo exacto al Maestro
+'   Matriz          VISTA: fondos abajo, fechas arriba, Var Ajustada
 '   Panel           los botones
 '   Log             el ultimo error, completo
 '
@@ -30,12 +33,14 @@ Option Explicit
 '   - Nada se corrige en silencio: lo raro cae en la columna Flag.
 '==============================================================================
 
-Private Const VER As String = "1.3"
+Private Const VER As String = "1.5"
 
 Private Const SH_CFG As String = "Config"
 Private Const SH_MAE As String = "Maestro_Fondos"
 Private Const SH_DAT As String = "Datos_Fondos"
 Private Const SH_MDE As String = "Marcas_Detalle"
+Private Const SH_MTZ As String = "Matriz"
+Private Const SH_CODS As String = "Codigos_Marcas"
 Private Const SH_LOG As String = "Log"
 Private Const SH_PAN As String = "Panel"
 
@@ -219,6 +224,25 @@ Private Sub CabeceraDatos(ws As Worksheet)
 End Sub
 
 
+Private Function MarcarRepetidos(ws As Worksheet) As Long
+    ' Escribe REPETIDO en E en toda fila cuyo codigo ya aparecio mas arriba.
+    Dim i As Long, ult As Long, cod As String, vistos As Object
+    Set vistos = NuevoDic()
+    ult = ws.Cells(ws.Rows.Count, MA_COD).End(xlUp).Row
+    For i = 2 To ult
+        cod = SinGuiones(Txt(ws.Cells(i, MA_COD).Value))
+        If Len(cod) > 0 Then
+            If vistos.Exists(cod) Then
+                ws.Cells(i, MA_ULT).Value = "REPETIDO"
+                MarcarRepetidos = MarcarRepetidos + 1
+            Else
+                vistos(cod) = 1
+            End If
+        End If
+    Next i
+End Function
+
+
 Private Function CodigosMaestro() As Object
     ' codigo -> Array(fila, nombre)
     Dim d As Object, ws As Worksheet, i As Long, ult As Long, cod As String
@@ -311,7 +335,8 @@ Public Sub CargarMarcas()
     Dim codigos As Object, ultMar As Object, llave As Object
     Dim cod As String, dFe As Double, vAdj As Double, k As Variant, arr As Variant
     Dim det() As Variant, nDet As Long, pos As Long
-    Dim nUsadas As Long, nDup As Long, raros As Long, nSin As Long
+    Dim censo As Object, cen As Variant
+    Dim nUsadas As Long, nDup As Long, raros As Long, nSin As Long, nRep As Long
     Dim yaAbierto As Boolean, msg As String
     Dim scrPrev As Boolean, calcPrev As XlCalculation, evPrev As Boolean
 
@@ -412,11 +437,25 @@ Public Sub CargarMarcas()
     nDet = 0
     Set llave = NuevoDic()    ' codigo|fecha -> posicion en det (para no duplicar)
     Set ultMar = NuevoDic()
+    Set censo = NuevoDic()    ' TODOS los codigos de Marcas -> Array(nombre, n, ultima)
     nFilas = UBound(v, 1)
     For i = fil0 To nFilas
         If (i Mod 250) = 0 Then mDetalle = "Filtrando, fila " & i & " de " & nFilas
         If EsNumero(v(i, colDia)) Then
             cod = SinGuiones(Txt(v(i, colCod)))
+            If Len(cod) > 0 Then
+                If censo.Exists(cod) Then
+                    cen = censo(cod)
+                    cen(1) = CLng(cen(1)) + 1
+                    If CDbl(v(i, colDia)) > CDbl(cen(2)) Then
+                        cen(2) = CDbl(v(i, colDia))
+                        If colNom > 0 Then cen(0) = Trim$(Txt(v(i, colNom)))
+                    End If
+                    censo(cod) = cen
+                Else
+                    censo(cod) = Array(IIf(colNom > 0, Trim$(Txt(v(i, colNom))), ""), 1&, CDbl(v(i, colDia)))
+                End If
+            End If
             If codigos.Exists(cod) Then
                 dFe = CDbl(v(i, colDia))
                 If EsNumero(v(i, colVar)) Then
@@ -454,9 +493,12 @@ Public Sub CargarMarcas()
     Paso "Escribiendo Marcas_Detalle (" & Format$(nDet, "#,##0") & " marcas)"
     Set wsDet = HojaOCrea(SH_MDE)
     EscribirDetalle wsDet, det, nDet
+    Paso "Escribiendo Codigos_Marcas (" & censo.Count & " codigos distintos)"
+    EscribirCenso censo, codigos
 
     Paso "Marcando la ultima marca en el Maestro"
     Set wsMae = ThisWorkbook.Worksheets(SH_MAE)
+    nRep = MarcarRepetidos(wsMae)
     For Each k In codigos.Keys
         arr = codigos(k)
         If ultMar.Exists(CStr(k)) Then
@@ -479,13 +521,175 @@ Public Sub CargarMarcas()
     If nDup > 0 Then msg = msg & "Repetidas (misma fecha y fondo, se quedo la ultima): " & nDup & vbCrLf
     If raros > 0 Then msg = msg & "REVISAR: " & raros & " marcas raras, mira la columna Flag." & vbCrLf
     msg = msg & "Fondos del Maestro: " & codigos.Count
-    If nSin > 0 Then msg = msg & "   (" & nSin & " sin ninguna marca: columna E = NO)"
+    If nRep > 0 Then msg = msg & vbCrLf & "REPETIDOS: " & nRep & " filas del Maestro tienen un codigo que ya " & _
+        "estaba mas arriba (columna E = REPETIDO). Borralas: solo cuenta la primera."
+    If nSin > 0 Then
+        msg = msg & vbCrLf & "SIN MARCAS: " & nSin & " (columna E del Maestro = NO)." & vbCrLf
+        msg = msg & "El codigo no coincide con el de Marcas. Abre la hoja " & SH_CODS & "," & vbCrLf
+        msg = msg & "busca el fondo por nombre y copia el codigo exacto al Maestro."
+    End If
     msg = msg & vbCrLf & vbCrLf & "Marcas_Detalle queda con " & Format$(nDet, "#,##0") & " filas."
     Aviso msg, "CargarMarcas"
     Exit Sub
 
 Falla:
     Reventar wb, calcPrev, scrPrev, evPrev, "CargarMarcas"
+End Sub
+
+
+Private Sub EscribirCenso(censo As Object, codigos As Object)
+    ' Todos los codigos que aparecen en Marcas. Para encontrar el codigo exacto
+    ' de un fondo que en el Maestro quedo con "NO".
+    Dim ws As Worksheet, out() As Variant, k As Variant, cen As Variant, n As Long
+    Set ws = HojaOCrea(SH_CODS)
+    ws.Cells.Clear
+    ws.Range("A1:E1").Value = Array("Codigo SBS", "Nombre en Marcas", "Marcas", "Ultima fecha", "En el Maestro")
+    With ws.Range("A1:E1")
+        .Font.Bold = True
+        .Font.Color = RGB(255, 255, 255)
+        .Interior.Color = RGB(64, 64, 64)
+    End With
+    ws.Columns(1).ColumnWidth = 18
+    ws.Columns(2).ColumnWidth = 44
+    ws.Columns(3).ColumnWidth = 9
+    ws.Columns(4).ColumnWidth = 13
+    ws.Columns(5).ColumnWidth = 13
+    ws.Range("G1").Value = "Un fondo del Maestro con E = NO no cruzo. Busca aqui su nombre y copia la columna A tal cual."
+    ws.Range("G1").Font.Color = RGB(128, 128, 128)
+    If censo.Count = 0 Then Exit Sub
+    ReDim out(1 To censo.Count, 1 To 5)
+    For Each k In censo.Keys
+        cen = censo(k)
+        n = n + 1
+        out(n, 1) = "'" & CStr(k)
+        out(n, 2) = CStr(cen(0))
+        out(n, 3) = CLng(cen(1))
+        out(n, 4) = CDbl(cen(2))
+        out(n, 5) = IIf(codigos.Exists(CStr(k)), "SI", "")
+    Next k
+    ws.Range(ws.Cells(2, 1), ws.Cells(n + 1, 5)).Value = out
+    ws.Range(ws.Cells(2, 4), ws.Cells(n + 1, 4)).NumberFormat = "dd/mm/yyyy"
+    ws.Range(ws.Cells(1, 1), ws.Cells(n + 1, 5)).Sort Key1:=ws.Cells(2, 2), Order1:=xlAscending, Header:=xlYes
+    CongelarPaneles ws, 1, 2
+End Sub
+
+
+Public Sub VerMatriz()
+    ' Fondos abajo, fechas arriba, Var Ajustada en cada celda. Es una VISTA de
+    ' Marcas_Detalle; se rehace entera cada vez.
+    Dim wsD As Worksheet, ws As Worksheet, v As Variant
+    Dim ult As Long, i As Long, nF As Long, nC As Long
+    Dim fechas As Object, filas As Object, codigos As Object
+    Dim k As Variant, arr As Variant, arrF() As Double, out() As Variant, cod As String
+    Dim scrPrev As Boolean, calcPrev As XlCalculation
+
+    On Error GoTo Falla
+    If Not HojaExiste(SH_MDE) Then
+        MsgBox "No hay Marcas_Detalle todavia. Corre Cargar marcas.", vbExclamation, "VerMatriz"
+        Exit Sub
+    End If
+    scrPrev = Application.ScreenUpdating
+    calcPrev = Application.Calculation
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Set wsD = ThisWorkbook.Worksheets(SH_MDE)
+    ult = wsD.Cells(wsD.Rows.Count, 1).End(xlUp).Row
+    If ult < 2 Then Err.Raise vbObjectError + 80, , "Marcas_Detalle esta vacia."
+    v = wsD.Range(wsD.Cells(2, 1), wsD.Cells(ult, 3)).Value2
+
+    Set codigos = CodigosMaestro()
+    Set filas = NuevoDic()
+    For Each k In codigos.Keys
+        filas.Add CStr(k), filas.Count + 2
+    Next k
+    Set fechas = NuevoDic()
+    For i = 1 To UBound(v, 1)
+        If EsNumero(v(i, 2)) Then
+            If Not fechas.Exists(CLng(v(i, 2))) Then fechas(CLng(v(i, 2))) = 0
+            cod = SinGuiones(Txt(v(i, 1)))
+            If Len(cod) > 0 And Not filas.Exists(cod) Then filas.Add cod, filas.Count + 2
+        End If
+    Next i
+
+    nC = fechas.Count
+    ReDim arrF(1 To nC)
+    i = 0
+    For Each k In fechas.Keys
+        i = i + 1
+        arrF(i) = CDbl(k)
+    Next k
+    OrdenarDoubles arrF
+    For i = 1 To nC
+        fechas(CLng(arrF(i))) = i + 2
+    Next i
+
+    nF = filas.Count + 1
+    ReDim out(1 To nF, 1 To nC + 2)
+    out(1, 1) = "Codigo SBS"
+    out(1, 2) = "Nombre"
+    For i = 1 To nC
+        out(1, i + 2) = arrF(i)
+    Next i
+    For Each k In filas.Keys
+        out(CLng(filas(k)), 1) = "'" & CStr(k)
+        If codigos.Exists(CStr(k)) Then
+            arr = codigos(CStr(k))
+            out(CLng(filas(k)), 2) = CStr(arr(1))
+        End If
+    Next k
+    For i = 1 To UBound(v, 1)
+        If EsNumero(v(i, 2)) And EsNumero(v(i, 3)) Then
+            cod = SinGuiones(Txt(v(i, 1)))
+            If filas.Exists(cod) Then
+                out(CLng(filas(cod)), CLng(fechas(CLng(v(i, 2))))) = CDbl(v(i, 3))
+            End If
+        End If
+    Next i
+
+    Set ws = HojaOCrea(SH_MTZ)
+    ws.Cells.Clear
+    ws.Range(ws.Cells(1, 1), ws.Cells(nF, nC + 2)).Value = out
+    With ws.Range(ws.Cells(1, 1), ws.Cells(1, nC + 2))
+        .Font.Bold = True
+        .Font.Color = RGB(255, 255, 255)
+        .Interior.Color = RGB(64, 64, 64)
+        .NumberFormat = "dd/mm/yy"
+        .HorizontalAlignment = xlCenter
+    End With
+    ws.Range(ws.Cells(2, 3), ws.Cells(nF, nC + 2)).NumberFormat = "0.00%"
+    ws.Columns(1).ColumnWidth = 18
+    ws.Columns(2).ColumnWidth = 34
+    ws.Range(ws.Columns(3), ws.Columns(nC + 2)).ColumnWidth = 9
+    CongelarPaneles ws, 1, 2
+    ws.Activate
+    On Error Resume Next
+    ActiveWindow.ScrollColumn = IIf(nC > 12, nC - 10, 1)
+    On Error GoTo Falla
+    ws.Range("A1").Select
+
+    Application.Calculation = calcPrev
+    Application.ScreenUpdating = scrPrev
+    MsgBox "Matriz lista: " & (nF - 1) & " fondos x " & nC & " fechas (Var Ajustada)." & vbCrLf & vbCrLf & _
+           "Es solo una vista. Se rehace cada vez que aprietas el boton.", vbInformation, "VerMatriz"
+    Exit Sub
+
+Falla:
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    MsgBox "VerMatriz se detuvo." & vbCrLf & vbCrLf & Err.Description, vbCritical, "VerMatriz"
+End Sub
+
+
+Private Sub OrdenarDoubles(ByRef a() As Double)
+    Dim i As Long, j As Long, t As Double
+    For i = LBound(a) To UBound(a) - 1
+        For j = i + 1 To UBound(a)
+            If a(j) < a(i) Then
+                t = a(i): a(i) = a(j): a(j) = t
+            End If
+        Next j
+    Next i
 End Sub
 
 
@@ -636,7 +840,8 @@ Public Sub CrearPanel()
 
     rutina = Array( _
         "CargarMarcas", "1. Cargar marcas", _
-        "PlantillaDatos", "2. Plantilla de datos")
+        "PlantillaDatos", "2. Plantilla de datos", _
+        "VerMatriz", "Ver matriz de marcas")
 
     extra = Array( _
         "NormalizarExcel", "ARREGLAR EXCEL", _
