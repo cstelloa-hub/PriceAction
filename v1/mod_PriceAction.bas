@@ -33,7 +33,7 @@ Option Explicit
 ' Rutina del dia:   1. Cargar FMS    2. ARMAR CUADRO    3. Guardar foto
 '==============================================================================
 
-Private Const VER As String = "3.0"
+Private Const VER As String = "3.2"
 
 Private Const SH_CFG As String = "Config"
 Private Const SH_PES As String = "BD_Pesos"
@@ -73,10 +73,10 @@ Private mFallo As Boolean
 Private mForzar As Boolean
 
 ' CUADRO: filas fijas
-Private Const CU_FIN   As Long = 4
-Private Const CU_BASE  As Long = 5
-Private Const CU_CAB   As Long = 6
-Private Const CU_DAT   As Long = 7
+Private Const CU_FIN   As Long = 2
+Private Const CU_BASE  As Long = 3
+Private Const CU_CAB   As Long = 4
+Private Const CU_DAT   As Long = 5
 
 ' CUADRO: columnas
 Private Const CC_MON   As Long = 1
@@ -269,8 +269,8 @@ Public Sub CargarFMS()
     Paso "Buscando el ultimo FMS <= " & Format$(CDate(dCorte), "dd/mm/yyyy")
     dFms = BuscarFms(carpeta, dCorte, ruta)
     If dFms = 0 Then Err.Raise vbObjectError + 2, , _
-        "No encontre ningun FMS en los 20 dias previos a " & Format$(CDate(dCorte), "dd/mm/yyyy") & _
-        vbCrLf & "Carpeta: " & carpeta
+        "No encontre ningun 'FMS_AAAAMMDD.xlsx' en los 20 dias previos a " & _
+        Format$(CDate(dCorte), "dd/mm/yyyy") & "." & vbCrLf & vbCrLf & QueHayEnCarpeta(carpeta)
 
     If Not mForzar Then
         If FmsYaCargado(dFms) Then
@@ -349,6 +349,31 @@ Public Sub CargarFMS()
 Falla:
     Reventar wb, calcPrev, scrPrev, evPrev, "CargarFMS"
 End Sub
+
+
+Private Function QueHayEnCarpeta(carpeta As String) As String
+    ' Para el mensaje de error: si la carpeta existe y que archivos FMS* ve.
+    Dim nom As String, n As Long, lista As String
+    QueHayEnCarpeta = "Carpeta (Config C4): " & carpeta & vbCrLf
+    If Len(Dir(carpeta, vbDirectory)) = 0 Then
+        QueHayEnCarpeta = QueHayEnCarpeta & "ESA CARPETA NO EXISTE o no tienes acceso. Revisa la ruta."
+        Exit Function
+    End If
+    On Error Resume Next
+    nom = Dir(carpeta & Application.PathSeparator & "*FMS*.*")
+    Do While Len(nom) > 0 And n < 8
+        n = n + 1
+        lista = lista & "   " & nom & vbCrLf
+        nom = Dir
+    Loop
+    On Error GoTo 0
+    If n = 0 Then
+        QueHayEnCarpeta = QueHayEnCarpeta & "La carpeta existe pero no tiene ningun archivo con 'FMS' en el nombre."
+    Else
+        QueHayEnCarpeta = QueHayEnCarpeta & "Archivos con 'FMS' que si veo ahi (hasta 8):" & vbCrLf & lista & _
+            "El nombre tiene que ser exactamente FMS_AAAAMMDD.xlsx (o .xls / .xlsb)."
+    End If
+End Function
 
 
 Private Sub AcumularCartera(v As Variant, cMap As Object, fondo As String, _
@@ -929,6 +954,7 @@ Public Sub ArmarTodo()
 
     Paso "Armando el CUADRO"
     ArmarCuadro ins, orden, dCorte
+    OcultarHojasAux
 
     Application.Calculation = xlCalculationAutomatic
     Application.CalculateFullRebuild
@@ -1101,18 +1127,24 @@ Public Sub CrearPanel()
         "CargarFMSForzado", "Cargar FMS FORZADO", _
         "ProbarTipoCambio", "Probar tipo de cambio", _
         "RevisarCodigosFMS", "Codigos del FMS sin seguir", _
+        "MostrarHojas", "Mostrar hojas (auditar)", _
+        "OcultarHojas", "Ocultar hojas", _
         "Diagnostico", "Diagnostico", _
         "Version", "Version")
 
     BotonesEnColumna ws, rutina, 60, 110, 170, 30, True
-    BotonesEnColumna ws, extra, 300, 110, 170, 26, False
+    BotonesEnColumna ws, extra, 300, 110, 170, 24, False
 
     ws.Range("B26").Value = "Antes del 1: en Base_RF corre 'Cargar vectores'. Si hay marcas nuevas, en Base_Marcas 'Cargar marcas'."
     ws.Range("B27").Value = "El 2 abre las dos bases en solo lectura, se copia lo que necesita y arma todo. Las bases no se tocan."
     ws.Range("B28").Value = "Si el 1 dice que ya tiene el FMS del dia y lo corrigieron: Cargar FMS FORZADO."
     ws.Range("B29").Value = "El 3 necesita el modulo mod_Guardar."
     ws.Range("B30").Value = "Si cortaste una macro con Esc: ARREGLAR EXCEL antes de seguir."
-    ws.Range("B26:B30").Font.Color = RGB(128, 128, 128)
+    ws.Range("B31").Value = "Precios, Instrumentos, Marcas, Retornos y Fondos quedan ocultas: 'Mostrar hojas' para auditar."
+    ws.Range("B33").Value = "CUADRO: total return = variacion de precio limpio + cupon devengado (dias/365). Peso = Val_total / total del fondo (FMS)."
+    ws.Range("B34").Value = "Filas grises: promedio ponderado por F1. USD pasa a soles con el spread de Config C15 prorrateado por dias."
+    ws.Range("B35").Value = "SubTotales y Total: + prima de Config C22 (modo C23). USD mm = peso x total del fondo / tipo de cambio."
+    ws.Range("B26:B35").Font.Color = RGB(128, 128, 128)
 
     ws.Columns("A").ColumnWidth = 2
     ws.Rows(2).RowHeight = 22
@@ -1130,6 +1162,37 @@ End Sub
 
 Public Sub Version()
     MsgBox "mod_PriceAction  v" & VER, vbInformation, "Version"
+End Sub
+
+
+Public Sub OcultarHojas()
+    OcultarHojasAux
+    ThisWorkbook.Worksheets(SH_CUA).Activate
+End Sub
+
+
+Public Sub MostrarHojas()
+    Dim ws As Worksheet
+    For Each ws In ThisWorkbook.Worksheets
+        ws.Visible = xlSheetVisible
+    Next ws
+End Sub
+
+
+Private Sub OcultarHojasAux()
+    ' A la vista solo lo que se usa: Panel, Config, Manual y CUADRO. El resto
+    ' son copias de las bases y calculos intermedios: se ocultan, no se borran.
+    ' Boton "Mostrar hojas" para auditar.
+    Dim ws As Worksheet, nom As String
+    On Error Resume Next
+    For Each ws In ThisWorkbook.Worksheets
+        nom = ws.Name
+        If nom = SH_PES Or nom = SH_PRE Or nom = SH_INS Or nom = SH_MDE Or nom = SH_DAT _
+           Or nom = SH_RET Or nom = SH_FON Or nom = SH_LOG Or nom = SH_MVA Then
+            ws.Visible = xlSheetHidden
+        End If
+    Next ws
+    On Error GoTo 0
 End Sub
 
 
@@ -1758,6 +1821,9 @@ End Function
 
 Private Sub CongelarPaneles(ws As Worksheet, filas As Long, cols As Long)
     Dim wsPrev As Object
+    ' Una hoja oculta no se puede activar: si se siguiera, los paneles se
+    ' congelarian en la hoja que este activa, que es otra.
+    If ws.Visible <> xlSheetVisible Then Exit Sub
     On Error Resume Next
     ThisWorkbook.Activate
     Set wsPrev = ActiveSheet
@@ -1777,9 +1843,7 @@ End Sub
 Private Function Letra(ByVal s As String, porDefecto As Long) As Long
     Dim i As Long, n As Long, ch As Long
     s = UCase$(Trim$(s))
-    ' Una columna de Excel tiene 1 a 3 letras (hasta XFD). Mas que eso es una
-    ' palabra, no una columna: se devuelve el valor por defecto.
-    If Len(s) = 0 Or Len(s) > 3 Then
+    If Len(s) = 0 Then
         Letra = porDefecto
         Exit Function
     End If
@@ -2232,29 +2296,22 @@ Private Sub ArmarCuadro(ins As Object, orden As Variant, dCorte As Double)
     ws.Cells.Clear
     ws.Cells.Interior.Pattern = xlNone
 
-    ws.Range("B2").Value = "Retornos: Cuasi Sob & Iliquidos"
-    ws.Range("B2").Font.Bold = True
-    ws.Range("B2").Font.Size = 15
-    ws.Range("B2").Font.Color = RGB(192, 0, 0)
-    ws.Cells(2, CC_W1).Value = dCorte
-    ws.Cells(2, CC_W1).NumberFormat = "dd/mm/yyyy"
-    ws.Cells(2, CC_W1).Font.Bold = True
-    ws.Cells(2, CC_W1 + 1).Value = "<- corte (Config C5, vacio = ultima fecha de BD_Precios)"
-    ws.Cells(2, CC_W1 + 1).Font.Color = RGB(128, 128, 128)
-    ws.Cells(2, CC_U1 - 1).Value = "Tipo de cambio"
-    ws.Cells(2, CC_U1 - 1).HorizontalAlignment = xlRight
-    ws.Cells(2, CC_U1 - 1).Font.Color = RGB(128, 128, 128)
-    ws.Cells(2, CC_U1).Formula = "=IFERROR(IF(N(" & SH_CFG & "!$C$72)>0," & _
-                                 SH_CFG & "!$C$72," & SH_PES & "!$M$3),"""")"
-    ws.Cells(2, CC_U1).NumberFormat = "0.0000"
-    ws.Cells(2, CC_U1).Font.Bold = True
-    ws.Range("B3").Value = "Total return = variacion de precio limpio + cupon devengado (dias/365)" & _
-        "   |   peso = Val_total / total del fondo (FMS)   |   filas grises: promedio ponderado por F1" & _
-        "   |   lo que esta en USD pasa a soles sumando el spread de Config C15, prorrateado por dias" & _
-        "   |   SubTotales y Total: + la prima de Config C22 (modo en C71)" & _
-        "   |   USD mm = peso x total del fondo / tipo de cambio (Config C24)"
-    ws.Range("B3").Font.Color = RGB(128, 128, 128)
-    ws.Range("B3").Font.Size = 8
+    ws.Range("B1").Value = "Retornos: Cuasi Sob & Iliquidos"
+    ws.Range("B1").Font.Bold = True
+    ws.Range("B1").Font.Size = 10
+    ws.Range("B1").Font.Color = RGB(192, 0, 0)
+    ws.Cells(1, CC_W1).Value = dCorte
+    ws.Cells(1, CC_W1).NumberFormat = "dd/mm/yyyy"
+    ws.Cells(1, CC_W1).Font.Bold = True
+    ws.Cells(1, CC_W1 + 1).Value = "<- corte (Config C5, vacio = ultima fecha de BD_Precios)"
+    ws.Cells(1, CC_W1 + 1).Font.Color = RGB(128, 128, 128)
+    ws.Cells(1, CC_U1 - 1).Value = "Tipo de cambio"
+    ws.Cells(1, CC_U1 - 1).HorizontalAlignment = xlRight
+    ws.Cells(1, CC_U1 - 1).Font.Color = RGB(128, 128, 128)
+    ws.Cells(1, CC_U1).Formula = "=IFERROR(IF(N(" & SH_CFG & "!$C$24)>0," & _
+                                 SH_CFG & "!$C$24," & SH_PES & "!$M$3),"""")"
+    ws.Cells(1, CC_U1).NumberFormat = "0.0000"
+    ws.Cells(1, CC_U1).Font.Bold = True
 
     ' --- encabezado de ventanas ---
     ws.Cells(CU_FIN, CC_NOM).Value = "fin"
@@ -2519,7 +2576,7 @@ Private Sub MontoUSD(ws As Worksheet, r As Long)
     ' llega a crearse la formula da #NOMBRE?, el IFERROR lo traga y la celda
     ' sale en blanco sin decir por que. Ya nos paso con los nombres md* de
     ' la hoja Fondos; no se repite.
-    tc = "IF(N(" & SH_CFG & "!$C$72)>0," & SH_CFG & "!$C$72," & SH_PES & "!$M$3)"
+    tc = "IF(N(" & SH_CFG & "!$C$24)>0," & SH_CFG & "!$C$24," & SH_PES & "!$M$3)"
     For j = 0 To 1
         cl = NumALetra(CC_P1 + j) & r
         tot = SH_PES & "!$M$" & (j + 1)
@@ -3303,6 +3360,8 @@ Private Sub FormatearCuadro(ws As Worksheet, ultFila As Long)
 
     If ultFila < CU_DAT Then Exit Sub
 
+    ws.Cells.Font.Name = "Arial"
+    ws.Cells.Font.Size = 8
     ws.Columns(CC_MON).ColumnWidth = 12
     ws.Columns(CC_NOM).ColumnWidth = 38
     ws.Columns(CC_ISIN).ColumnWidth = 15
@@ -3346,12 +3405,26 @@ Private Sub FormatearCuadro(ws As Worksheet, ultFila As Long)
         .Font.Bold = True
         .HorizontalAlignment = xlCenter
     End With
-    With ws.Range(ws.Cells(CU_CAB, CC_ISIN), ws.Cells(CU_CAB, CC_U1 + 1))
+    ' Cabecera: rojo para el instrumento y sus datos, negro para CY, pesos y
+    ' USD mm, rojo para las ventanas, gris para Mensual / Ann (abajo).
+    With ws.Range(ws.Cells(CU_CAB, CC_NOM), ws.Cells(CU_CAB, CC_SPR))
+        .Interior.Color = RGB(192, 0, 0)
+        .Font.Color = RGB(255, 255, 255)
         .Font.Bold = True
         .HorizontalAlignment = xlCenter
-        .Borders(xlEdgeBottom).LineStyle = xlContinuous
-        .Borders(xlEdgeBottom).Color = RGB(128, 128, 128)
     End With
+    With ws.Range(ws.Cells(CU_CAB, CC_CY), ws.Cells(CU_CAB, CC_U1 + 1))
+        .Interior.Color = RGB(0, 0, 0)
+        .Font.Color = RGB(255, 255, 255)
+        .Font.Bold = True
+        .HorizontalAlignment = xlCenter
+    End With
+    ws.Cells(CU_CAB, CC_NOM).Value = "Instrumento"
+    ws.Cells(CU_CAB, CC_NOM).HorizontalAlignment = xlLeft
+    ' El corte, en amarillo, como en la lamina
+    ws.Cells(CU_FIN, CC_W1).Interior.Color = RGB(255, 230, 100)
+    ws.Cells(CU_FIN, CC_W1).Font.Bold = True
+    ws.Cells(CU_FIN, CC_W1).Font.Color = RGB(0, 0, 0)
     With ws.Range(ws.Cells(CU_DAT, CC_NOM), ws.Cells(ultFila, CC_ANN)).Borders
         .LineStyle = xlContinuous
         .Color = RGB(217, 217, 217)
