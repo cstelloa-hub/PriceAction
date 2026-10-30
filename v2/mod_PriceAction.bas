@@ -33,7 +33,7 @@ Option Explicit
 ' Rutina del dia:   1. Cargar FMS    2. ARMAR CUADRO    3. Guardar foto
 '==============================================================================
 
-Private Const VER As String = "3.5"
+Private Const VER As String = "3.6"
 
 Private Const SH_CFG As String = "Config"
 Private Const SH_PES As String = "BD_Pesos"
@@ -509,6 +509,7 @@ Private Sub ArmarInstrumentos(vMae As Variant, vMaf As Variant, vDat As Variant,
     Dim datos As Object, arr As Variant, dFe As Double, vistos As Object
     Dim cab As Variant, monFms As Object, mon As String
 
+    mDetalle = "Instrumentos: creando la hoja"
     Set ws = HojaOCrea(SH_INS)
     ws.Cells.Clear
     cab = Array("Codigo SBS", "Nombre", "Categoria", "Fuera / REF", "Moneda", "CY (fondos)", _
@@ -527,7 +528,11 @@ Private Sub ArmarInstrumentos(vMae As Variant, vMaf As Variant, vDat As Variant,
     '   A cod  B nombre  C cat  D fuera  E nem  F emisor  G cupon  H venc  I mon
     '   J ISIN  K rating  L dur  M spread  N visto
     If IsArray(vMae) Then
+        mDetalle = "Instrumentos: Maestro de Base_RF tiene " & UBound(vMae, 1) & " filas x " & UBound(vMae, 2) & " columnas"
+        If UBound(vMae, 2) < 13 Then Err.Raise vbObjectError + 31, , _
+            "El Maestro de Base_RF tiene solo " & UBound(vMae, 2) & " columnas (esperaba 14). Corre 'Crear Maestro' en Base_RF."
         For i = 2 To UBound(vMae, 1)
+            mDetalle = "Instrumentos: bono fila " & i & " del Maestro de Base_RF"
             cod = SinGuiones(Txt(vMae(i, 1)))
             If Len(cod) > 0 Then
                 If vistos.Exists(cod) Then
@@ -560,6 +565,7 @@ Private Sub ArmarInstrumentos(vMae As Variant, vMaf As Variant, vDat As Variant,
     End If
 
     ' --- moneda de los fondos segun el FMS (BD_Pesos: A codigo, D moneda)
+    mDetalle = "Instrumentos: leyendo la moneda de BD_Pesos"
     Set monFms = NuevoDic()
     If HojaExiste(SH_PES) Then
         With ThisWorkbook.Worksheets(SH_PES)
@@ -578,7 +584,11 @@ Private Sub ArmarInstrumentos(vMae As Variant, vMaf As Variant, vDat As Variant,
     '   Datos_Fondos:   A fecha  B cod  C nombre  D dur  E spread  F CY  G fuente
     Set datos = NuevoDic()
     If IsArray(vDat) Then
+        mDetalle = "Instrumentos: Datos_Fondos tiene " & UBound(vDat, 1) & " filas x " & UBound(vDat, 2) & " columnas"
+        If UBound(vDat, 2) < 6 Then Err.Raise vbObjectError + 32, , _
+            "Datos_Fondos de Base_Marcas tiene solo " & UBound(vDat, 2) & " columnas (esperaba 7)."
         For i = 2 To UBound(vDat, 1)
+            mDetalle = "Instrumentos: Datos_Fondos fila " & i
             cod = SinGuiones(Txt(vDat(i, 2)))
             If Len(cod) > 0 And EsNumero(vDat(i, 1)) Then
                 dFe = CDbl(vDat(i, 1))
@@ -594,7 +604,11 @@ Private Sub ArmarInstrumentos(vMae As Variant, vMaf As Variant, vDat As Variant,
         Next i
     End If
     If IsArray(vMaf) Then
+        mDetalle = "Instrumentos: Maestro_Fondos tiene " & UBound(vMaf, 1) & " filas x " & UBound(vMaf, 2) & " columnas"
+        If UBound(vMaf, 2) < 4 Then Err.Raise vbObjectError + 33, , _
+            "Maestro_Fondos de Base_Marcas tiene solo " & UBound(vMaf, 2) & " columnas (esperaba 6). Corre 'Crear Maestro' en Base_Marcas."
         For i = 2 To UBound(vMaf, 1)
+            mDetalle = "Instrumentos: fondo fila " & i & " de Maestro_Fondos"
             cod = SinGuiones(Txt(vMaf(i, 1)))
             If Len(cod) > 0 Then
                 If vistos.Exists(cod) Then
@@ -639,6 +653,7 @@ Private Sub ArmarInstrumentos(vMae As Variant, vMaf As Variant, vDat As Variant,
         Next i
     End If
 
+    mDetalle = "Instrumentos: dando formato"
     ws.Columns(1).ColumnWidth = 18
     ws.Columns(2).ColumnWidth = 36
     ws.Columns(3).ColumnWidth = 22
