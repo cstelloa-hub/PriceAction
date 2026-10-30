@@ -33,7 +33,7 @@ Option Explicit
 ' Rutina del dia:   1. Cargar FMS    2. ARMAR CUADRO    3. Guardar foto
 '==============================================================================
 
-Private Const VER As String = "3.3"
+Private Const VER As String = "3.4"
 
 Private Const SH_CFG As String = "Config"
 Private Const SH_PES As String = "BD_Pesos"
@@ -434,7 +434,7 @@ Private Sub LeerBases(wsCfg As Worksheet, ByRef nBonos As Long, ByRef nFondos As
         yaAbierto = LibroYaAbierto(rutaMa)
         Set wb = Workbooks.Open(Filename:=rutaMa, ReadOnly:=True, UpdateLinks:=0, AddToMru:=False)
         Set ws = HojaDe(wb, "Maestro_Fondos")
-        If Not ws Is Nothing Then vMaf = LeerHoja(ws, 5)
+        If Not ws Is Nothing Then vMaf = LeerHoja(ws, 6)
         Set ws = HojaDe(wb, "Datos_Fondos")
         If Not ws Is Nothing Then vDat = LeerHoja(ws, 7)
         Set ws = HojaDe(wb, "Marcas_Detalle")
@@ -507,7 +507,7 @@ Private Sub ArmarInstrumentos(vMae As Variant, vMaf As Variant, vDat As Variant,
     ' Datos_Fondos la fila con la ULTIMA fecha <= corte.
     Dim ws As Worksheet, r As Long, i As Long, cod As String, nom As String
     Dim datos As Object, arr As Variant, dFe As Double, vistos As Object
-    Dim cab As Variant
+    Dim cab As Variant, monFms As Object, mon As String
 
     Set ws = HojaOCrea(SH_INS)
     ws.Cells.Clear
@@ -559,8 +559,22 @@ Private Sub ArmarInstrumentos(vMae As Variant, vMaf As Variant, vDat As Variant,
         Next i
     End If
 
+    ' --- moneda de los fondos segun el FMS (BD_Pesos: A codigo, D moneda)
+    Set monFms = NuevoDic()
+    If HojaExiste(SH_PES) Then
+        With Worksheets(SH_PES)
+            For i = 2 To .Cells(.Rows.Count, 1).End(xlUp).Row
+                cod = SinGuiones(Txt(.Cells(i, 1).Value))
+                If Len(cod) > 0 And Not monFms.Exists(cod) Then
+                    If Len(Trim$(Txt(.Cells(i, 4).Value))) > 0 Then monFms(cod) = NormMoneda(Txt(.Cells(i, 4).Value))
+                End If
+            Next i
+        End With
+    End If
+
     ' --- fondos: Maestro_Fondos + Datos_Fondos (ultima fecha <= corte)
-    '   Maestro_Fondos: A cod  B nombre  C cat  D fuera  E ultima marca
+    '   Maestro_Fondos: A cod  B nombre  C cat  D fuera  E moneda (opcional)  F ultima marca
+    '   Moneda: 1) columna E del Maestro_Fondos si esta llena, 2) FMS (BD_Pesos), 3) PEN
     '   Datos_Fondos:   A fecha  B cod  C nombre  D dur  E spread  F CY  G fuente
     Set datos = NuevoDic()
     If IsArray(vDat) Then
@@ -597,7 +611,18 @@ Private Sub ArmarInstrumentos(vMae As Variant, vMaf As Variant, vDat As Variant,
                     ws.Cells(r, 2).Value = nom
                     ws.Cells(r, 3).Value = Trim$(Txt(vMaf(i, 3)))
                     ws.Cells(r, 4).Value = UCase$(Trim$(Txt(vMaf(i, 4))))
-                    ws.Cells(r, 5).Value = "PEN"
+                    mon = ""
+                    If UBound(vMaf, 2) >= 5 Then mon = Trim$(Txt(vMaf(i, 5)))
+                    If Len(mon) > 0 Then
+                        mon = NormMoneda(mon)
+                    ElseIf monFms.Exists(cod) Then
+                        mon = monFms(cod)
+                    End If
+                    If Len(mon) = 0 Then
+                        mon = "PEN"
+                        avisos = avisos & "Sin moneda (no esta en el FMS ni en Maestro_Fondos col. E): se asume PEN: " & nom & vbCrLf
+                    End If
+                    ws.Cells(r, 5).Value = mon
                     ws.Cells(r, 11).Value = "Base_Marcas"
                     ws.Cells(r, 12).Value = nom
                     If datos.Exists(cod) Then
