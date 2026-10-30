@@ -33,7 +33,7 @@ Option Explicit
 ' Rutina del dia:   1. Cargar FMS    2. ARMAR CUADRO    3. Guardar foto
 '==============================================================================
 
-Private Const VER As String = "3.4"
+Private Const VER As String = "3.5"
 
 Private Const SH_CFG As String = "Config"
 Private Const SH_PES As String = "BD_Pesos"
@@ -562,7 +562,7 @@ Private Sub ArmarInstrumentos(vMae As Variant, vMaf As Variant, vDat As Variant,
     ' --- moneda de los fondos segun el FMS (BD_Pesos: A codigo, D moneda)
     Set monFms = NuevoDic()
     If HojaExiste(SH_PES) Then
-        With Worksheets(SH_PES)
+        With ThisWorkbook.Worksheets(SH_PES)
             For i = 2 To .Cells(.Rows.Count, 1).End(xlUp).Row
                 cod = SinGuiones(Txt(.Cells(i, 1).Value))
                 If Len(cod) > 0 And Not monFms.Exists(cod) Then
