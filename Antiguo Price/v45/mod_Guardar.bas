@@ -2,7 +2,7 @@ Attribute VB_Name = "mod_Guardar"
 Option Explicit
 
 '==============================================================================
-' mod_Guardar  v3.1  (para mod_Iliquidos v2.70+, un solo libro)
+' mod_Guardar  v3.2  (para mod_Iliquidos v2.70+, un solo libro)
 '
 ' Modulo aparte. No llama a nada de mod_Iliquidos: se puede pegar y borrar
 ' sin romper el otro.
@@ -18,7 +18,8 @@ Option Explicit
 '                    libro del reporte de posiciones (el de Config C75), con la
 '                    fecha que uso Cargar posiciones. Funciona con ese libro cerrado.
 '     CUADRO_Meses   el mismo cuadro mas un bloque a la derecha con una columna
-'                    por mes del ano del corte y el retorno del mes de cada fondo.
+'                    por mes del ano del corte y el retorno del mes de cada bono
+'                    (precio limpio + cupon, como el MTD) y de cada fondo (marcas).
 '     Matriz_RF      precio limpio por codigo (filas) y fecha (columnas), con
 '                    moneda y tasa cupon. Sale de BD_Precios. Solo los codigos
 '                    que estan en el cuadro, desde la base del FY hasta el corte.
@@ -139,7 +140,7 @@ Public Sub GuardarCuadro()
     CongelarFormulas wsOri, wsNew2, nF, nV
     mPaso = "borrando nombres definidos de la copia"
     BorrarNombres wbNew
-    mPaso = "armando el bloque mensual de fondos"
+    mPaso = "armando el bloque mensual"
     nMes = BloqueMensual(wsOri, wsNew2, dCorte)
 
     ' ---- 3. matrices
@@ -172,7 +173,7 @@ Public Sub GuardarCuadro()
     msg = msg & "Hojas: " & G_CUA & " (sin bloque mensual), " & G_CU2 & " (con bloque mensual), " & G_MRF & ", " & G_MFO & vbCrLf
     msg = msg & "Cuadros: " & nF & " formulas vivas (filas grises), " & nExtF & " celdas F1/F2/USD mm apuntando a " & vbCrLf & _
           "   " & mExt & vbCrLf & nV & " celdas pasadas a valor." & vbCrLf
-    msg = msg & "Bloque mensual de fondos (" & G_CU2 & "): " & nMes & " meses con marca." & vbCrLf
+    msg = msg & "Bloque mensual (" & G_CU2 & "): " & nMes & " retornos de mes (bonos y fondos)." & vbCrLf
     msg = msg & G_MRF & ": " & nRF & " codigos.   " & G_MFO & ": " & nFo & " fondos." & vbCrLf
     If nFo = 0 Then msg = msg & "   NO SALIO " & G_MFO & ": " & mDiagFo & vbCrLf
     If nRF = 0 Then msg = msg & "   (no salio " & G_MRF & ": ningun codigo del cuadro tiene precio en BD_Precios entre esas fechas)" & vbCrLf
@@ -468,39 +469,70 @@ End Function
 
 Private Function BloqueMensual(wsOri As Worksheet, wsNew As Worksheet, dCorte As Date) As Long
     ' A la derecha del cuadro (dos columnas despues de la ultima), una columna
-    ' por mes del ano del corte con el RETORNO DEL MES de cada fondo: producto
-    ' de (1 + var ajustada) de las marcas de ese mes, menos 1. Vacio si no marco.
-    ' Bonos (precio diario, ver Matriz_RF), filas grises y meses futuros: en blanco.
+    ' por mes del ano del corte con el RETORNO DEL MES de cada fila:
+    '   bonos:  (P fin de mes / P fin del mes anterior - 1) + cupon x dias / 365 / P base
+    '           (+ pase USD->PEN de Config C58 prorrateado, si es USD), igual que la
+    '           columna MTD del cuadro. Mes en curso = hasta el corte.
+    '   fondos: producto de (1 + var ajustada) de las marcas del mes, menos 1.
+    ' Vacio: sin precio al inicio o al fin del mes, sin marca, fila gris, mes futuro.
     Dim ws As Worksheet, v As Variant, ult As Long, i As Long, cod As String, d As Double
-    Dim acum As Object, k As String, c0 As Long, m As Long, r As Long, ultFila As Long, ultCol As Long
-    Dim anio As Long, n As Long, rg As Range
+    Dim acum As Object, precios As Object, cupones As Object, k As String
+    Dim c0 As Long, m As Long, r As Long, ultFila As Long, ultCol As Long
+    Dim anio As Long, n As Long, rg As Range, spread As Double, mon As String
+    Dim dIniMes As Double, dFinMes As Double, dF As Double, dB As Double, pF As Double, pB As Double, cup As Double
+    Dim x As Double, hay As Boolean
 
-    If Not HojaExiste(G_MDE) Then Exit Function
-    Set ws = ThisWorkbook.Worksheets(G_MDE)
-    ult = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
-    If ult < 2 Then Exit Function
     anio = Year(dCorte)
+    On Error Resume Next
+    spread = CDbl(ThisWorkbook.Worksheets(G_CFG).Range("C58").Value)
+    On Error GoTo 0
 
-    ' Marcas_Detalle: A codigo  B nombre  C fecha  D var ajustada
-    ' codigo|mes -> producto acumulado de (1 + var)
-    v = ws.Range(ws.Cells(2, 1), ws.Cells(ult, 4)).Value2
-    Set acum = CreateObject("Scripting.Dictionary"): acum.CompareMode = 1
-    For i = 1 To UBound(v, 1)
-        cod = SinGuionesG(Texto(v(i, 1)))
-        If Len(cod) > 0 And IsNumeric(v(i, 3)) And Not IsEmpty(v(i, 3)) Then
-            d = CDbl(v(i, 3))
-            If Year(d) = anio And d <= CDbl(dCorte) Then
-                If IsNumeric(v(i, 4)) And Not IsEmpty(v(i, 4)) Then
-                    k = cod & "|" & Month(d)
-                    If acum.Exists(k) Then
-                        acum(k) = CDbl(acum(k)) * (1 + CDbl(v(i, 4)))
-                    Else
-                        acum(k) = 1 + CDbl(v(i, 4))
+    ' --- precios: codigo|fecha -> precio limpio (col E) y cupon (col G), todo el historico
+    Set precios = CreateObject("Scripting.Dictionary"): precios.CompareMode = 1
+    Set cupones = CreateObject("Scripting.Dictionary"): cupones.CompareMode = 1
+    If HojaExiste(G_PRE) Then
+        Set ws = ThisWorkbook.Worksheets(G_PRE)
+        ult = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+        If ult >= 2 Then
+            v = ws.Range(ws.Cells(2, 1), ws.Cells(ult, 7)).Value2
+            For i = 1 To UBound(v, 1)
+                If IsNumeric(v(i, 1)) And Not IsEmpty(v(i, 1)) Then
+                    cod = SinGuionesG(Texto(v(i, 2)))
+                    If Len(cod) > 0 And IsNumeric(v(i, 5)) And Not IsEmpty(v(i, 5)) Then
+                        k = cod & "|" & CStr(CDbl(v(i, 1)))
+                        precios(k) = CDbl(v(i, 5))
+                        If IsNumeric(v(i, 7)) And Not IsEmpty(v(i, 7)) Then cupones(k) = CDbl(v(i, 7))
                     End If
                 End If
-            End If
+            Next i
         End If
-    Next i
+    End If
+
+    ' --- marcas: codigo|mes -> producto acumulado de (1 + var)
+    Set acum = CreateObject("Scripting.Dictionary"): acum.CompareMode = 1
+    If HojaExiste(G_MDE) Then
+        Set ws = ThisWorkbook.Worksheets(G_MDE)
+        ult = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+        If ult >= 2 Then
+            v = ws.Range(ws.Cells(2, 1), ws.Cells(ult, 4)).Value2
+            For i = 1 To UBound(v, 1)
+                cod = SinGuionesG(Texto(v(i, 1)))
+                If Len(cod) > 0 And IsNumeric(v(i, 3)) And Not IsEmpty(v(i, 3)) Then
+                    d = CDbl(v(i, 3))
+                    If Year(d) = anio And d <= CDbl(dCorte) Then
+                        If IsNumeric(v(i, 4)) And Not IsEmpty(v(i, 4)) Then
+                            k = cod & "|" & Month(d)
+                            If acum.Exists(k) Then
+                                acum(k) = CDbl(acum(k)) * (1 + CDbl(v(i, 4)))
+                            Else
+                                acum(k) = 1 + CDbl(v(i, 4))
+                            End If
+                        End If
+                    End If
+                End If
+            Next i
+        End If
+    End If
 
     ultFila = wsOri.Cells(wsOri.Rows.Count, 1).End(xlUp).Row
     If ultFila < 5 Then Exit Function
@@ -508,7 +540,8 @@ Private Function BloqueMensual(wsOri As Worksheet, wsNew As Worksheet, dCorte As
     c0 = ultCol + 2
 
     With wsNew
-        .Cells(3, c0).Value = "Fondos: retorno del mes (marcas de Marcas_Detalle encadenadas). Vacio = no marco ese mes. Bonos: ver Matriz_RF."
+        .Cells(3, c0).Value = "Retorno del mes. Bonos: precio limpio fin de mes vs fin del mes anterior + cupon devengado" & _
+                              IIf(spread <> 0, " (+ pase USD->PEN)", "") & ", como el MTD. Fondos: marcas del mes encadenadas. Vacio = sin dato."
         .Cells(3, c0).Font.Color = RGB(128, 128, 128)
         .Cells(3, c0).Font.Size = 7
         For m = 1 To 12
@@ -525,6 +558,7 @@ Private Function BloqueMensual(wsOri As Worksheet, wsNew As Worksheet, dCorte As
 
         For r = 5 To ultFila
             cod = SinGuionesG(Texto(wsOri.Cells(r, 2).Value))
+            mon = UCase$(Texto(wsOri.Cells(r, 3).Value))
             If Len(cod) = 0 Then
                 ' fila gris / etiqueta: se copia el color para que la banda siga
                 If wsOri.Cells(r, 1).Interior.ColorIndex <> xlNone Then
@@ -532,9 +566,34 @@ Private Function BloqueMensual(wsOri As Worksheet, wsNew As Worksheet, dCorte As
                 End If
             Else
                 For m = 1 To 12
+                    dIniMes = CDbl(DateSerial(anio, m, 1))
+                    If dIniMes > CDbl(dCorte) Then Exit For
+                    hay = False
                     k = cod & "|" & m
                     If acum.Exists(k) Then
-                        .Cells(r, c0 + m - 1).Value = CDbl(acum(k)) - 1
+                        ' fondo
+                        x = CDbl(acum(k)) - 1
+                        hay = True
+                    Else
+                        ' bono: ultimo precio <= fin de mes (dentro del mes) y ultimo <= dia antes del inicio
+                        dFinMes = CDbl(DateSerial(anio, m + 1, 0))
+                        If dFinMes > CDbl(dCorte) Then dFinMes = CDbl(dCorte)
+                        dF = UltimoPrecio(precios, cod, dFinMes, dIniMes)
+                        dB = UltimoPrecio(precios, cod, dIniMes - 1, dIniMes - 15)
+                        If dF > 0 And dB > 0 Then
+                            pF = CDbl(precios(cod & "|" & CStr(dF)))
+                            pB = CDbl(precios(cod & "|" & CStr(dB)))
+                            cup = 0
+                            If cupones.Exists(cod & "|" & CStr(dF)) Then cup = CDbl(cupones(cod & "|" & CStr(dF)))
+                            If pB > 0 Then
+                                x = (pF - pB) / pB + cup * (dF - dB) / 365 / pB
+                                If mon = "USD" Then x = x + spread * (dF - dB) / 365
+                                hay = True
+                            End If
+                        End If
+                    End If
+                    If hay Then
+                        .Cells(r, c0 + m - 1).Value = x
                         n = n + 1
                     End If
                 Next m
@@ -552,6 +611,18 @@ Private Function BloqueMensual(wsOri As Worksheet, wsNew As Worksheet, dCorte As
         End With
     End With
     BloqueMensual = n
+End Function
+
+
+Private Function UltimoPrecio(precios As Object, cod As String, dHasta As Double, dDesde As Double) As Double
+    ' Fecha del ultimo precio del codigo entre dDesde y dHasta (0 si no hay).
+    Dim dd As Double
+    For dd = dHasta To dDesde Step -1
+        If precios.Exists(cod & "|" & CStr(dd)) Then
+            UltimoPrecio = dd
+            Exit Function
+        End If
+    Next dd
 End Function
 
 
