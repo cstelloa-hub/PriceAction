@@ -2,7 +2,7 @@ Attribute VB_Name = "mod_Guardar"
 Option Explicit
 
 '==============================================================================
-' mod_Guardar  v2.0  (para mod_Iliquidos v2.70, un solo libro)
+' mod_Guardar  v2.1  (para mod_Iliquidos v2.70+, un solo libro)
 '
 ' Modulo aparte. No llama a nada de mod_Iliquidos: se puede pegar y borrar
 ' sin romper el otro.
@@ -37,6 +37,8 @@ Private Const G_INS As String = "Instrumentos"
 Private Const G_MRF As String = "Matriz_RF"
 Private Const G_MFO As String = "Matriz_Fondos"
 
+Private mPaso As String
+
 
 Public Sub GuardarCuadro()
     Dim wbNew As Workbook, wsOri As Worksheet, wsNew As Worksheet
@@ -47,6 +49,7 @@ Public Sub GuardarCuadro()
 
     On Error GoTo Falla
     t0 = Timer
+    mPaso = "arrancando"
     scrPrev = Application.ScreenUpdating
     evPrev = Application.EnableEvents
     alPrev = Application.DisplayAlerts
@@ -57,14 +60,27 @@ Public Sub GuardarCuadro()
     If Not HojaExiste(G_CUA) Then Err.Raise vbObjectError + 101, , _
         "No encuentro la hoja '" & G_CUA & "'. Corre RECALCULAR primero."
     Set wsOri = ThisWorkbook.Worksheets(G_CUA)
+    If wsOri.Visible <> xlSheetVisible Then wsOri.Visible = xlSheetVisible
 
+    mPaso = "leyendo corte e inicio de Config"
     dCorte = CorteDeConfig()
     dIni = InicioDeConfig(dCorte)
 
     ' ---- carpeta y nombre
+    mPaso = "preparando la carpeta destino"
     carpeta = SinBarraFinal(Texto(ThisWorkbook.Worksheets(G_CFG).Range("C14").Value))
-    If Len(carpeta) = 0 Then carpeta = ThisWorkbook.Path & Application.PathSeparator & "Resumenes"
-    If Len(Dir(carpeta, vbDirectory)) = 0 Then MkDir carpeta
+    If Len(carpeta) = 0 Then
+        If Len(ThisWorkbook.Path) = 0 Then Err.Raise vbObjectError + 102, , _
+            "El libro no esta guardado y Config C14 esta vacio: no se donde guardar la foto."
+        carpeta = ThisWorkbook.Path & Application.PathSeparator & "Resumenes"
+    End If
+    If Len(Dir(carpeta, vbDirectory)) = 0 Then
+        On Error Resume Next
+        MkDir carpeta
+        On Error GoTo Falla
+        If Len(Dir(carpeta, vbDirectory)) = 0 Then Err.Raise vbObjectError + 103, , _
+            "No existe la carpeta y no pude crearla: " & carpeta & vbCrLf & "Revisa Config C14."
+    End If
     base = carpeta & Application.PathSeparator & "Iliquidos_CUADRO_" & Format$(dCorte, "yyyymmdd")
     ruta = base & ".xlsx"
     n = 1
@@ -74,22 +90,35 @@ Public Sub GuardarCuadro()
     Loop
 
     ' ---- 1. copia del CUADRO (formato, anchos, colores) a un libro nuevo
+    mPaso = "copiando la hoja CUADRO a un libro nuevo"
     wsOri.Copy
     Set wbNew = ActiveWorkbook
+    ' Seguro: si por lo que sea el activo sigue siendo este libro, no se toca.
+    If wbNew Is ThisWorkbook Then
+        Set wbNew = Nothing
+        Err.Raise vbObjectError + 104, , "La copia de la hoja no creo un libro nuevo."
+    End If
     Set wsNew = wbNew.Worksheets(1)
     Application.Calculation = xlCalculationManual
 
     ' ---- 2. formulas: las que solo miran la misma hoja se quedan; las que
     '         miran otra hoja o un nombre definido pasan a valor.
+    mPaso = "pasando las formulas del CUADRO"
     CongelarFormulas wsOri, wsNew, nF, nV
+    mPaso = "borrando nombres definidos de la copia"
     BorrarNombres wbNew
 
     ' ---- 3. matrices
+    mPaso = "armando " & G_MRF
     nRF = MatrizRF(wbNew, dIni, dCorte)
+    mPaso = "armando " & G_MFO
     nFo = MatrizFondos(wbNew, dIni, dCorte)
 
+    mPaso = "guardando " & ruta
+    On Error Resume Next
     wsNew.Activate
     wsNew.Range("A1").Select
+    On Error GoTo Falla
     Application.Calculation = xlCalculationAutomatic
     wbNew.Calculate
 
@@ -113,13 +142,18 @@ Public Sub GuardarCuadro()
     Exit Sub
 
 Falla:
+    msg = "GuardarCuadro se detuvo en: " & mPaso & vbCrLf & vbCrLf & _
+          "ESCRIBEME ESTA LINEA:   G" & Err.Number & " @ " & mPaso & vbCrLf & vbCrLf & Err.Description
     On Error Resume Next
-    If Not wbNew Is Nothing Then wbNew.Close SaveChanges:=False
+    ' Nunca se cierra este libro: solo la copia, y solo si de verdad es otra.
+    If Not wbNew Is Nothing Then
+        If Not (wbNew Is ThisWorkbook) Then wbNew.Close SaveChanges:=False
+    End If
     Application.Calculation = xlCalculationAutomatic
     Application.DisplayAlerts = True
     Application.EnableEvents = True
     Application.ScreenUpdating = True
-    MsgBox "GuardarCuadro se detuvo." & vbCrLf & vbCrLf & Err.Description, vbCritical, "GuardarCuadro"
+    MsgBox msg, vbCritical, "GuardarCuadro"
 End Sub
 
 
@@ -397,11 +431,13 @@ Private Function MatrizRF(wb As Workbook, dIni As Date, dCorte As Date) As Long
         .Range(.Columns(5), .Columns(nFe + 4)).ColumnWidth = 9
         .Cells(nL + 3, 1).Value = "Precio limpio (BD_Precios col. E) por fecha. Retorno de una ventana = (P fin / P base - 1) + tasa cupon x dias / 365 / P base, como en la hoja Retornos."
         .Cells(nL + 3, 1).Font.Color = RGB(128, 128, 128)
-        .Activate
-        ActiveWindow.FreezePanes = False
-        .Range("E2").Select
-        ActiveWindow.FreezePanes = True
     End With
+    On Error Resume Next
+    wsM.Activate
+    ActiveWindow.FreezePanes = False
+    wsM.Range("E2").Select
+    ActiveWindow.FreezePanes = True
+    On Error GoTo 0
     MatrizRF = nL
 End Function
 
@@ -494,11 +530,13 @@ Private Function MatrizFondos(wb As Workbook, dIni As Date, dCorte As Date) As L
         .Range(.Columns(3), .Columns(nFe + 2)).ColumnWidth = 9
         .Cells(nL + 3, 1).Value = "Var ajustada de cada marca (Marcas_Detalle). Retorno de una ventana = producto de (1 + var) de las marcas con fecha dentro de la ventana, menos 1."
         .Cells(nL + 3, 1).Font.Color = RGB(128, 128, 128)
-        .Activate
-        ActiveWindow.FreezePanes = False
-        .Range("C2").Select
-        ActiveWindow.FreezePanes = True
     End With
+    On Error Resume Next
+    wsM.Activate
+    ActiveWindow.FreezePanes = False
+    wsM.Range("C2").Select
+    ActiveWindow.FreezePanes = True
+    On Error GoTo 0
     MatrizFondos = nL
 End Function
 
