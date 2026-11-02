@@ -2,7 +2,7 @@ Attribute VB_Name = "mod_Guardar"
 Option Explicit
 
 '==============================================================================
-' mod_Guardar  v2.3  (para mod_Iliquidos v2.70+, un solo libro)
+' mod_Guardar  v2.4  (para mod_Iliquidos v2.70+, un solo libro)
 '
 ' Modulo aparte. No llama a nada de mod_Iliquidos: se puede pegar y borrar
 ' sin romper el otro.
@@ -38,6 +38,7 @@ Private Const G_MRF As String = "Matriz_RF"
 Private Const G_MFO As String = "Matriz_Fondos"
 
 Private mPaso As String
+Private mDiagFo As String
 
 
 Public Sub GuardarCuadro()
@@ -137,7 +138,7 @@ Public Sub GuardarCuadro()
     msg = msg & "Corte: " & Format$(dCorte, "dd/mm/yyyy") & "   Matrices desde: " & Format$(dIni, "dd/mm/yyyy") & vbCrLf
     msg = msg & "CUADRO: " & nF & " formulas vivas (filas grises), " & nV & " celdas pasadas a valor." & vbCrLf
     msg = msg & G_MRF & ": " & nRF & " codigos.   " & G_MFO & ": " & nFo & " fondos." & vbCrLf
-    If nFo = 0 Then msg = msg & "   (no salio " & G_MFO & ": ningun codigo del cuadro tiene marcas en Marcas_Detalle entre esas fechas)" & vbCrLf
+    If nFo = 0 Then msg = msg & "   NO SALIO " & G_MFO & ": " & mDiagFo & vbCrLf
     If nRF = 0 Then msg = msg & "   (no salio " & G_MRF & ": ningun codigo del cuadro tiene precio en BD_Precios entre esas fechas)" & vbCrLf
     msg = msg & "Sin nombres definidos ni vinculos a este libro."
     MsgBox msg, vbInformation, "GuardarCuadro"
@@ -452,10 +453,18 @@ Private Function MatrizFondos(wb As Workbook, dIni As Date, dCorte As Date) As L
     Dim fe() As Double, nFe As Long, j As Long, out() As Variant, r As Long
     Dim wsM As Worksheet, kk As Variant, lista() As String, nL As Long
 
-    If Not HojaExiste(G_MDE) Then Exit Function
+    Dim nFil As Long, nFecha As Long, nRango As Long, nCod As Long, ejMd As String, ejIn As String
+    mDiagFo = ""
+    If Not HojaExiste(G_MDE) Then
+        mDiagFo = "no existe la hoja " & G_MDE
+        Exit Function
+    End If
     Set ws = ThisWorkbook.Worksheets(G_MDE)
     ult = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
-    If ult < 2 Then Exit Function
+    If ult < 2 Then
+        mDiagFo = G_MDE & " esta vacia: corre Cargar Marcas"
+        Exit Function
+    End If
     v = ws.Range(ws.Cells(2, 1), ws.Cells(ult, 4)).Value2
 
     Set codigos = CodigosDelCuadro(nombres)
@@ -465,8 +474,15 @@ Private Function MatrizFondos(wb As Workbook, dIni As Date, dCorte As Date) As L
 
     For i = 1 To UBound(v, 1)
         cod = SinGuionesG(Texto(v(i, 1)))
+        If Len(cod) > 0 Then
+            nFil = nFil + 1
+            If nFil <= 3 Then ejMd = ejMd & "[" & cod & " | " & Texto(v(i, 3)) & " | " & Texto(v(i, 4)) & "] "
+        End If
         If Len(cod) > 0 And IsNumeric(v(i, 3)) And Not IsEmpty(v(i, 3)) Then
+            nFecha = nFecha + 1
             d = CDbl(v(i, 3))
+            If d >= CDbl(dIni) And d <= CDbl(dCorte) Then nRango = nRango + 1
+            If codigos.Exists(cod) Then nCod = nCod + 1
             If d >= CDbl(dIni) And d <= CDbl(dCorte) And codigos.Exists(cod) Then
                 If IsNumeric(v(i, 4)) And Not IsEmpty(v(i, 4)) Then
                     If Not fechas.Exists(d) Then fechas(d) = 1
@@ -482,7 +498,19 @@ Private Function MatrizFondos(wb As Workbook, dIni As Date, dCorte As Date) As L
             End If
         End If
     Next i
-    If fechas.Count = 0 Then Exit Function
+    If fechas.Count = 0 Then
+        j = 0
+        For Each kk In codigos.Keys
+            j = j + 1
+            If j <= 3 Then ejIn = ejIn & "[" & CStr(kk) & "] "
+        Next kk
+        mDiagFo = "filas en " & G_MDE & ": " & nFil & " | con fecha numerica en col C: " & nFecha & _
+                  " | dentro de " & Format$(dIni, "dd/mm/yy") & " - " & Format$(dCorte, "dd/mm/yy") & ": " & nRango & _
+                  " | cuyo codigo esta en el cuadro: " & nCod & vbCrLf & _
+                  "   primeras filas de " & G_MDE & " (codigo | col C | col D): " & ejMd & vbCrLf & _
+                  "   primeros codigos del cuadro: " & ejIn
+        Exit Function
+    End If
 
     nFe = fechas.Count
     ReDim fe(1 To nFe)
