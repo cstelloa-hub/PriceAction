@@ -2,7 +2,7 @@ Attribute VB_Name = "mod_Guardar"
 Option Explicit
 
 '==============================================================================
-' mod_Guardar  v2.2  (para mod_Iliquidos v2.70+, un solo libro)
+' mod_Guardar  v2.3  (para mod_Iliquidos v2.70+, un solo libro)
 '
 ' Modulo aparte. No llama a nada de mod_Iliquidos: se puede pegar y borrar
 ' sin romper el otro.
@@ -137,6 +137,8 @@ Public Sub GuardarCuadro()
     msg = msg & "Corte: " & Format$(dCorte, "dd/mm/yyyy") & "   Matrices desde: " & Format$(dIni, "dd/mm/yyyy") & vbCrLf
     msg = msg & "CUADRO: " & nF & " formulas vivas (filas grises), " & nV & " celdas pasadas a valor." & vbCrLf
     msg = msg & G_MRF & ": " & nRF & " codigos.   " & G_MFO & ": " & nFo & " fondos." & vbCrLf
+    If nFo = 0 Then msg = msg & "   (no salio " & G_MFO & ": ningun codigo del cuadro tiene marcas en Marcas_Detalle entre esas fechas)" & vbCrLf
+    If nRF = 0 Then msg = msg & "   (no salio " & G_MRF & ": ningun codigo del cuadro tiene precio en BD_Precios entre esas fechas)" & vbCrLf
     msg = msg & "Sin nombres definidos ni vinculos a este libro."
     MsgBox msg, vbInformation, "GuardarCuadro"
     Exit Sub
@@ -443,7 +445,7 @@ End Function
 
 
 Private Function MatrizFondos(wb As Workbook, dIni As Date, dCorte As Date) As Long
-    ' Marcas_Detalle: A codigo  B fecha  C var ajustada  D nombre en Marcas  E ln
+    ' Marcas_Detalle: A codigo  B nombre en Marcas  C fecha  D var ajustada  E ln
     Dim ws As Worksheet, v As Variant, ult As Long, i As Long
     Dim codigos As Object, nombres As Object, fechas As Object, datos As Object, tiene As Object
     Dim cod As String, d As Double, k As String
@@ -454,7 +456,7 @@ Private Function MatrizFondos(wb As Workbook, dIni As Date, dCorte As Date) As L
     Set ws = ThisWorkbook.Worksheets(G_MDE)
     ult = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
     If ult < 2 Then Exit Function
-    v = ws.Range(ws.Cells(2, 1), ws.Cells(ult, 3)).Value2
+    v = ws.Range(ws.Cells(2, 1), ws.Cells(ult, 4)).Value2
 
     Set codigos = CodigosDelCuadro(nombres)
     Set fechas = CreateObject("Scripting.Dictionary")
@@ -463,17 +465,17 @@ Private Function MatrizFondos(wb As Workbook, dIni As Date, dCorte As Date) As L
 
     For i = 1 To UBound(v, 1)
         cod = SinGuionesG(Texto(v(i, 1)))
-        If Len(cod) > 0 And IsNumeric(v(i, 2)) And Not IsEmpty(v(i, 2)) Then
-            d = CDbl(v(i, 2))
+        If Len(cod) > 0 And IsNumeric(v(i, 3)) And Not IsEmpty(v(i, 3)) Then
+            d = CDbl(v(i, 3))
             If d >= CDbl(dIni) And d <= CDbl(dCorte) And codigos.Exists(cod) Then
-                If IsNumeric(v(i, 3)) And Not IsEmpty(v(i, 3)) Then
+                If IsNumeric(v(i, 4)) And Not IsEmpty(v(i, 4)) Then
                     If Not fechas.Exists(d) Then fechas(d) = 1
                     k = cod & "|" & CStr(d)
                     If datos.Exists(k) Then
                         ' dos marcas el mismo dia: se componen
-                        datos(k) = (1 + CDbl(datos(k))) * (1 + CDbl(v(i, 3))) - 1
+                        datos(k) = (1 + CDbl(datos(k))) * (1 + CDbl(v(i, 4))) - 1
                     Else
-                        datos(k) = CDbl(v(i, 3))
+                        datos(k) = CDbl(v(i, 4))
                     End If
                     tiene(cod) = 1
                 End If
