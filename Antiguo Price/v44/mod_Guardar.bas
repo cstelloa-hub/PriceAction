@@ -2,14 +2,17 @@ Attribute VB_Name = "mod_Guardar"
 Option Explicit
 
 '==============================================================================
-' mod_Guardar  v2.4  (para mod_Iliquidos v2.70+, un solo libro)
+' mod_Guardar  v2.6  (para mod_Iliquidos v2.70+, un solo libro)
 '
 ' Modulo aparte. No llama a nada de mod_Iliquidos: se puede pegar y borrar
 ' sin romper el otro.
 '
 ' Que hace (boton "Guardar la foto"):
 '   Crea un .xlsx nuevo con tres hojas, listo para pegar en el otro Excel:
-'     CUADRO         el cuadro tal cual. Las filas grises (subtotales, totales,
+'     CUADRO         el cuadro tal cual, mas un bloque a la derecha con una
+'                    columna por mes del ano del corte y el retorno del mes de
+'                    cada fondo, desde sus marcas (formato de la lamina de equity).
+'                    Las filas grises (subtotales, totales,
 '                    niveles) conservan sus formulas SUMPRODUCT, que apuntan a
 '                    celdas visibles de la misma hoja. Las filas de cada bono o
 '                    fondo van en valores (su formula apuntaba a Retornos /
@@ -46,7 +49,7 @@ Public Sub GuardarCuadro()
     Dim carpeta As String, base As String, ruta As String
     Dim dCorte As Date, dIni As Date, n As Long
     Dim scrPrev As Boolean, evPrev As Boolean, alPrev As Boolean, calcPrev As XlCalculation
-    Dim t0 As Single, msg As String, nF As Long, nV As Long, nRF As Long, nFo As Long
+    Dim t0 As Single, msg As String, nF As Long, nV As Long, nRF As Long, nFo As Long, nMes As Long
 
     On Error GoTo Falla
     t0 = Timer
@@ -108,6 +111,8 @@ Public Sub GuardarCuadro()
     CongelarFormulas wsOri, wsNew, nF, nV
     mPaso = "borrando nombres definidos de la copia"
     BorrarNombres wbNew
+    mPaso = "armando el bloque mensual de fondos"
+    nMes = BloqueMensual(wsOri, wsNew, dCorte)
 
     ' ---- 3. matrices
     mPaso = "armando " & G_MRF
@@ -137,6 +142,7 @@ Public Sub GuardarCuadro()
     msg = msg & ruta & vbCrLf & vbCrLf
     msg = msg & "Corte: " & Format$(dCorte, "dd/mm/yyyy") & "   Matrices desde: " & Format$(dIni, "dd/mm/yyyy") & vbCrLf
     msg = msg & "CUADRO: " & nF & " formulas vivas (filas grises), " & nV & " celdas pasadas a valor." & vbCrLf
+    msg = msg & "Bloque mensual de fondos (a la derecha del cuadro): " & nMes & " meses con marca." & vbCrLf
     msg = msg & G_MRF & ": " & nRF & " codigos.   " & G_MFO & ": " & nFo & " fondos." & vbCrLf
     If nFo = 0 Then msg = msg & "   NO SALIO " & G_MFO & ": " & mDiagFo & vbCrLf
     If nRF = 0 Then msg = msg & "   (no salio " & G_MRF & ": ningun codigo del cuadro tiene precio en BD_Precios entre esas fechas)" & vbCrLf
@@ -309,6 +315,97 @@ Private Function NumTexto(v As Variant) As String
     End If
     If Left$(NumTexto, 1) = "." Then NumTexto = "0" & NumTexto
     If Left$(NumTexto, 2) = "-." Then NumTexto = "-0" & Mid$(NumTexto, 2)
+End Function
+
+
+'------------------------------------------------------------ bloque mensual
+
+Private Function BloqueMensual(wsOri As Worksheet, wsNew As Worksheet, dCorte As Date) As Long
+    ' A la derecha del cuadro (dos columnas despues de la ultima), una columna
+    ' por mes del ano del corte con el RETORNO DEL MES de cada fondo: producto
+    ' de (1 + var ajustada) de las marcas de ese mes, menos 1. Vacio si no marco.
+    ' Bonos (precio diario, ver Matriz_RF), filas grises y meses futuros: en blanco.
+    Dim ws As Worksheet, v As Variant, ult As Long, i As Long, cod As String, d As Double
+    Dim acum As Object, k As String, c0 As Long, m As Long, r As Long, ultFila As Long, ultCol As Long
+    Dim anio As Long, n As Long, rg As Range
+
+    If Not HojaExiste(G_MDE) Then Exit Function
+    Set ws = ThisWorkbook.Worksheets(G_MDE)
+    ult = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    If ult < 2 Then Exit Function
+    anio = Year(dCorte)
+
+    ' Marcas_Detalle: A codigo  B nombre  C fecha  D var ajustada
+    ' codigo|mes -> producto acumulado de (1 + var)
+    v = ws.Range(ws.Cells(2, 1), ws.Cells(ult, 4)).Value2
+    Set acum = CreateObject("Scripting.Dictionary"): acum.CompareMode = 1
+    For i = 1 To UBound(v, 1)
+        cod = SinGuionesG(Texto(v(i, 1)))
+        If Len(cod) > 0 And IsNumeric(v(i, 3)) And Not IsEmpty(v(i, 3)) Then
+            d = CDbl(v(i, 3))
+            If Year(d) = anio And d <= CDbl(dCorte) Then
+                If IsNumeric(v(i, 4)) And Not IsEmpty(v(i, 4)) Then
+                    k = cod & "|" & Month(d)
+                    If acum.Exists(k) Then
+                        acum(k) = CDbl(acum(k)) * (1 + CDbl(v(i, 4)))
+                    Else
+                        acum(k) = 1 + CDbl(v(i, 4))
+                    End If
+                End If
+            End If
+        End If
+    Next i
+
+    ultFila = wsOri.Cells(wsOri.Rows.Count, 1).End(xlUp).Row
+    If ultFila < 5 Then Exit Function
+    ultCol = wsOri.Cells(4, wsOri.Columns.Count).End(xlToLeft).Column    ' fila 4 = cabecera del cuadro
+    c0 = ultCol + 2
+
+    With wsNew
+        .Cells(3, c0).Value = "Fondos: retorno del mes (marcas de Marcas_Detalle encadenadas). Vacio = no marco ese mes. Bonos: ver Matriz_RF."
+        .Cells(3, c0).Font.Color = RGB(128, 128, 128)
+        .Cells(3, c0).Font.Size = 7
+        For m = 1 To 12
+            .Cells(4, c0 + m - 1).Value = Format$(DateSerial(anio, m, 1), "mm/yy")
+        Next m
+        With .Range(.Cells(4, c0), .Cells(4, c0 + 11))
+            .Interior.Color = RGB(192, 0, 0)
+            .Font.Color = RGB(255, 255, 255)
+            .Font.Bold = True
+            .HorizontalAlignment = xlCenter
+        End With
+        .Columns(c0 - 1).ColumnWidth = 1.6
+        .Range(.Columns(c0), .Columns(c0 + 11)).ColumnWidth = 8.5
+
+        For r = 5 To ultFila
+            cod = SinGuionesG(Texto(wsOri.Cells(r, 2).Value))
+            If Len(cod) = 0 Then
+                ' fila gris / etiqueta: se copia el color para que la banda siga
+                If wsOri.Cells(r, 1).Interior.ColorIndex <> xlNone Then
+                    .Range(.Cells(r, c0), .Cells(r, c0 + 11)).Interior.Color = wsOri.Cells(r, 1).Interior.Color
+                End If
+            Else
+                For m = 1 To 12
+                    k = cod & "|" & m
+                    If acum.Exists(k) Then
+                        .Cells(r, c0 + m - 1).Value = CDbl(acum(k)) - 1
+                        n = n + 1
+                    End If
+                Next m
+            End If
+        Next r
+
+        Set rg = .Range(.Cells(5, c0), .Cells(ultFila, c0 + 11))
+        rg.NumberFormat = "0.00%"
+        rg.Font.Size = 8
+        rg.HorizontalAlignment = xlCenter
+        With rg.Borders
+            .LineStyle = xlContinuous
+            .Color = RGB(217, 217, 217)
+            .Weight = xlThin
+        End With
+    End With
+    BloqueMensual = n
 End Function
 
 
