@@ -2,7 +2,7 @@ Attribute VB_Name = "mod_Guardar"
 Option Explicit
 
 '==============================================================================
-' mod_Guardar  v2.1  (para mod_Iliquidos v2.70+, un solo libro)
+' mod_Guardar  v2.2  (para mod_Iliquidos v2.70+, un solo libro)
 '
 ' Modulo aparte. No llama a nada de mod_Iliquidos: se puede pegar y borrar
 ' sin romper el otro.
@@ -120,7 +120,7 @@ Public Sub GuardarCuadro()
     wsNew.Range("A1").Select
     On Error GoTo Falla
     Application.Calculation = xlCalculationAutomatic
-    wbNew.Calculate
+    Application.Calculate
 
     Application.DisplayAlerts = False
     wbNew.SaveAs Filename:=ruta, FileFormat:=xlOpenXMLWorkbook
