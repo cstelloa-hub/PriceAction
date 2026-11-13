@@ -43,10 +43,20 @@ let
     EnRango    = Table.SelectRows(ConFecha, each [Fecha] <> null and [Fecha] >= FechaInicio),
 
     // ---------------- leer un vector: columnas por posicion ---------------
+    //  Los "RFL.xls" de la SBS no siempre son Excel de verdad: a veces son una
+    //  tabla HTML o texto con tabs con extension .xls. Se prueba en ese orden.
     LeerUno = (contenido as binary) as table =>
         let
-            Libro = Excel.Workbook(contenido, false),
-            Hoja  = Libro{0}[Data],
+            ComoExcel = try Excel.Workbook(contenido, false){0}[Data] otherwise null,
+            ComoHtml  = if ComoExcel <> null then null else
+                        try (let Pag = Web.Page(contenido),
+                                 Tablas = Table.SelectRows(Pag, each [Data] <> null),
+                                 ConFilas = Table.AddColumn(Tablas, "N", each Table.RowCount([Data])),
+                                 Mayor = Table.Sort(ConFilas, {{"N", Order.Descending}}){0}[Data]
+                             in Mayor) otherwise null,
+            ComoTexto = if ComoExcel <> null or ComoHtml <> null then null else
+                        try Csv.Document(contenido, [Delimiter = "#(tab)", Encoding = 1252, QuoteStyle = QuoteStyle.None]) otherwise null,
+            Hoja  = if ComoExcel <> null then ComoExcel else if ComoHtml <> null then ComoHtml else ComoTexto,
             Cols  = Table.ColumnNames(Hoja),
             Col   = (n as number) => if n <= List.Count(Cols) then Table.Column(Hoja, Cols{n - 1}) else List.Repeat({null}, Table.RowCount(Hoja)),
             Sel   = Table.FromColumns(
