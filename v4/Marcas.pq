@@ -41,7 +41,10 @@ let
     Hoja    = if Table.IsEmpty(Table.SelectRows(Hojas, each [Name] = HojaMarcas))
               then error "No encuentro la hoja '" & HojaMarcas & "' en Marcas. Hojas: " & Text.Combine(Hojas[Name], " | ")
               else Hojas{[Name = HojaMarcas]}[Data],
-    SinTop  = Table.Skip(Hoja, FilaCabecera - 1),
+    // Marcas trae celdas con #REF! / #N/A: Power Query revienta con
+    // "Invalid cell value" al tocarlas. Se vuelven vacias antes de seguir.
+    SinErr  = Table.ReplaceErrorValues(Hoja, List.Transform(Table.ColumnNames(Hoja), each {_, null})),
+    SinTop  = Table.Skip(SinErr, FilaCabecera - 1),
     Cab     = Table.PromoteHeaders(SinTop, [PromoteAllScalars = true]),
     Nombres = Table.ColumnNames(Cab),
 
